@@ -10,6 +10,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 import logging
+import re
 from typing import List, Dict, Any, Optional
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import QueuePool
@@ -62,6 +63,67 @@ class DatabaseManager:
             logger.error(f"Error getting connection: {e}")
             raise
     
+    def _split_sql_statements(self, sql_content: str) -> List[str]:
+        """
+        Split SQL content into individual statements, handling complex cases.
+        
+        Args:
+            sql_content: Full SQL file content
+            
+        Returns:
+            List of SQL statements
+        """
+        # Remove SQL comments (-- style and /* */ style)
+        sql_content = re.sub(r'--[^\n]*', '', sql_content)
+        sql_content = re.sub(r'/\*.*?\*/', '', sql_content, flags=re.DOTALL)
+        
+        # Split by semicolon but be smart about it
+        statements = []
+        current_statement = []
+        in_dollar_quote = False
+        dollar_tag = None
+        
+        lines = sql_content.split('\n')
+        
+        for line in lines:
+            stripped = line.strip()
+            
+            # Check for dollar-quoted strings ($$)
+            if '$$' in stripped:
+                if not in_dollar_quote:
+                    # Starting dollar quote
+                    in_dollar_quote = True
+                    # Extract the tag if any (e.g., $tag$ or just $$)
+                    match = re.search(r'\$(\w*)\$', stripped)
+                    if match:
+                        dollar_tag = match.group(0)
+                else:
+                    # Check if this closes the dollar quote
+                    if dollar_tag and dollar_tag in stripped:
+                        in_dollar_quote = False
+                        dollar_tag = None
+                    elif '$$' in stripped and dollar_tag == '$$':
+                        in_dollar_quote = False
+                        dollar_tag = None
+            
+            current_statement.append(line)
+            
+            # If we hit a semicolon and not in dollar quote, it's end of statement
+            if ';' in stripped and not in_dollar_quote:
+                statement = '\n'.join(current_statement).strip()
+                if statement and not statement.startswith('--'):
+                    statements.append(statement)
+                current_statement = []
+        
+        # Add any remaining statement
+        if current_statement:
+            statement = '\n'.join(current_statement).strip()
+            if statement and not statement.startswith('--'):
+                statements.append(statement)
+        
+        # Filter out empty statements
+        return [s for s in statements if s and s.strip()]
+    
     def execute_schema(self, schema_file: str) -> bool:
         """
         Execute SQL schema file.
@@ -78,17 +140,28 @@ class DatabaseManager:
             if not schema_path.exists():
                 raise FileNotFoundError(f"Schema file not found: {schema_file}")
             
-            with open(schema_path, 'r') as f:
+            with open(schema_path, 'r', encoding='utf-8') as f:
                 schema_sql = f.read()
             
-            # Execute using SQLAlchemy
-            with self.engine.begin() as conn:
-                # Split and execute each statement
-                statements = [s.strip() for s in schema_sql.split(';') if s.strip()]
-                for statement in statements:
-                    conn.execute(text(statement))
+            # Split into individual statements
+            statements = self._split_sql_statements(schema_sql)
             
-            logger.info(f"Schema executed successfully: {schema_file}")
+            if not statements:
+                logger.warning(f"No SQL statements found in {schema_file}")
+                return True  # Not an error, just empty
+            
+            # Execute each statement
+            with self.engine.begin() as conn:
+                for i, statement in enumerate(statements, 1):
+                    try:
+                        conn.execute(text(statement))
+                        logger.debug(f"Executed statement {i}/{len(statements)}")
+                    except Exception as e:
+                        logger.error(f"Error in statement {i}: {e}")
+                        logger.error(f"Statement: {statement[:200]}...")
+                        raise
+            
+            logger.info(f"Schema executed successfully: {schema_file} ({len(statements)} statements)")
             return True
             
         except Exception as e:

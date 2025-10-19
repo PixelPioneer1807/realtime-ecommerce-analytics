@@ -11,6 +11,12 @@ Metrics computed:
 - Cart additions/removals
 - Session duration
 - Conversion status
+- Cart abandonment tracking (NEW)
+
+PORTFOLIO ENHANCEMENTS:
+- Tracks cart abandonment events and reasons
+- Calculates abandonment metrics
+- User persona tracking
 """
 
 import logging
@@ -50,7 +56,13 @@ class SessionAggregator(StreamProcessor):
             'searches': 0,
             'cart_value': 0.0,
             'is_converted': False,
-            'purchase_value': 0.0
+            'purchase_value': 0.0,
+            # NEW: Cart abandonment tracking
+            'is_cart_abandoned': False,
+            'abandonment_reason': None,
+            'time_in_cart_seconds': 0,
+            'checkout_initiated': False,
+            'persona': None
         })
     
     def process_event(self, event: dict) -> Optional[dict]:
@@ -76,6 +88,11 @@ class SessionAggregator(StreamProcessor):
                 self.session_starts[session_id] = datetime.fromisoformat(
                     timestamp_str.replace('Z', '+00:00')
                 ).replace(tzinfo=None)
+                
+                # Track persona
+                persona = event.get('persona')
+                if persona:
+                    self.session_metrics[session_id]['persona'] = persona
             
             # Update metrics based on event type
             metrics = self.session_metrics[session_id]
@@ -99,13 +116,30 @@ class SessionAggregator(StreamProcessor):
                 price = event.get('price', 0)
                 quantity = event.get('quantity', 1)
                 metrics['cart_value'] -= price * quantity
+                # Ensure cart value doesn't go negative
+                metrics['cart_value'] = max(0, metrics['cart_value'])
             
             elif event_type == 'search':
                 metrics['searches'] += 1
             
+            elif event_type == 'checkout_initiated':
+                metrics['checkout_initiated'] = True
+            
             elif event_type == 'purchase':
                 metrics['is_converted'] = True
                 metrics['purchase_value'] = event.get('cart_value', 0.0)
+            
+            # NEW: Handle cart abandonment
+            elif event_type == 'cart_abandoned':
+                metrics['is_cart_abandoned'] = True
+                metrics['abandonment_reason'] = event.get('abandonment_reason')
+                metrics['time_in_cart_seconds'] = event.get('time_in_cart_seconds', 0)
+                
+                logger.info(
+                    f"Cart abandoned detected: session {session_id}, "
+                    f"reason: {metrics['abandonment_reason']}, "
+                    f"value: ${event.get('cart_value', 0):.2f}"
+                )
             
             return event
             
@@ -160,6 +194,11 @@ class SessionAggregator(StreamProcessor):
             # Determine if bounce (single page view, < 30 seconds)
             is_bounce = page_views <= 1 and duration_seconds < 30
             
+            # NEW: Calculate abandonment metrics
+            is_cart_abandoned = metrics.get('is_cart_abandoned', False)
+            abandonment_reason = metrics.get('abandonment_reason')
+            time_in_cart = metrics.get('time_in_cart_seconds', 0)
+            
             # Build aggregated record
             session_record = {
                 'session_id': session_id,
@@ -181,6 +220,12 @@ class SessionAggregator(StreamProcessor):
                 'session_duration_seconds': duration_seconds,
                 'avg_time_per_page': round(avg_time_per_page, 2),
                 'bounce': is_bounce,
+                # NEW: Cart abandonment fields
+                'is_cart_abandoned': is_cart_abandoned,
+                'abandonment_reason': abandonment_reason,
+                'time_in_cart_seconds': time_in_cart,
+                'checkout_initiated': metrics.get('checkout_initiated', False),
+                'persona': metrics.get('persona'),
                 'updated_at': datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
             }
             
@@ -191,12 +236,19 @@ class SessionAggregator(StreamProcessor):
             redis_key = f"session:{session_id}"
             self.sink_to_redis(redis_key, session_record, expire_seconds=3600)
             
-            logger.info(
+            # Enhanced logging with abandonment info
+            log_msg = (
                 f"Aggregated session {session_id}: "
                 f"{page_views} page views, "
-                f"{metrics.get('cart_additions', 0)} cart additions, "
-                f"converted={metrics.get('is_converted', False)}"
+                f"{metrics.get('cart_additions', 0)} cart additions"
             )
+            
+            if is_cart_abandoned:
+                log_msg += f", ABANDONED (reason: {abandonment_reason})"
+            elif metrics.get('is_converted', False):
+                log_msg += f", CONVERTED (${metrics.get('purchase_value', 0):.2f})"
+            
+            logger.info(log_msg)
             
             return session_record
             
@@ -217,13 +269,17 @@ if __name__ == "__main__":
     )
     
     print("\n" + "="*60)
-    print("🚀 SESSION AGGREGATOR JOB")
+    print("🚀 SESSION AGGREGATOR JOB (Enhanced)")
     print("="*60)
     print("\nThis job processes user events and aggregates session metrics.")
     print("It reads from Kafka 'user-events' topic and writes to PostgreSQL.")
+    print("\n✨ NEW FEATURES:")
+    print("  - Cart abandonment tracking")
+    print("  - Abandonment reason analysis")
+    print("  - User persona tracking")
     print("\nMake sure the following are running:")
     print("  1. Docker Compose (Kafka, PostgreSQL, Redis)")
-    print("  2. User event producer")
+    print("  2. User event producer (with realistic simulator)")
     print("\nPress Ctrl+C to stop.\n")
     print("="*60 + "\n")
     

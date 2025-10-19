@@ -6,7 +6,7 @@
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS user_sessions (
     session_id VARCHAR(50) PRIMARY KEY,
-    user_id INTEGER NOT NULL,
+    user_id VARCHAR(50) NOT NULL,
     start_time TIMESTAMP NOT NULL,
     end_time TIMESTAMP,
     last_activity TIMESTAMP NOT NULL,
@@ -28,6 +28,15 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     is_converted BOOLEAN DEFAULT FALSE,
     purchase_value DECIMAL(10, 2) DEFAULT 0.00,
     
+    -- NEW: Cart abandonment tracking
+    is_cart_abandoned BOOLEAN DEFAULT FALSE,
+    abandonment_reason VARCHAR(100),
+    time_in_cart_seconds INTEGER DEFAULT 0,
+    checkout_initiated BOOLEAN DEFAULT FALSE,
+    
+    -- NEW: User persona tracking
+    persona VARCHAR(50),
+    
     -- Session quality indicators
     session_duration_seconds INTEGER DEFAULT 0,
     avg_time_per_page DECIMAL(10, 2) DEFAULT 0.00,
@@ -41,6 +50,10 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 CREATE INDEX idx_user_sessions_user_id ON user_sessions(user_id);
 CREATE INDEX idx_user_sessions_start_time ON user_sessions(start_time);
 CREATE INDEX idx_user_sessions_converted ON user_sessions(is_converted);
+-- NEW: Indexes for cart abandonment analysis
+CREATE INDEX idx_user_sessions_abandoned ON user_sessions(is_cart_abandoned);
+CREATE INDEX idx_user_sessions_persona ON user_sessions(persona);
+CREATE INDEX idx_user_sessions_abandonment_reason ON user_sessions(abandonment_reason);
 
 -- ============================================================================
 -- USER PROFILES (Aggregated behavior)
@@ -134,6 +147,7 @@ CREATE INDEX idx_product_metrics_conversion ON product_metrics(overall_conversio
 
 -- ============================================================================
 -- CART ABANDONMENT EVENTS (For churn prediction)
+-- ENHANCED: Now captures abandonment reasons and context
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS cart_abandonments (
     abandonment_id SERIAL PRIMARY KEY,
@@ -148,6 +162,13 @@ CREATE TABLE IF NOT EXISTS cart_abandonments (
     abandonment_time TIMESTAMP NOT NULL,
     session_duration INTEGER NOT NULL,
     pages_viewed INTEGER NOT NULL,
+    
+    -- NEW: Enhanced abandonment tracking
+    abandonment_reason VARCHAR(100),
+    time_in_cart_seconds INTEGER DEFAULT 0,
+    device_type VARCHAR(20),
+    checkout_initiated BOOLEAN DEFAULT FALSE,
+    persona VARCHAR(50),
     
     -- Predicted by ML
     churn_probability DECIMAL(5, 2),
@@ -165,6 +186,10 @@ CREATE TABLE IF NOT EXISTS cart_abandonments (
 CREATE INDEX idx_cart_abandonments_user ON cart_abandonments(user_id);
 CREATE INDEX idx_cart_abandonments_time ON cart_abandonments(abandonment_time);
 CREATE INDEX idx_cart_abandonments_recovered ON cart_abandonments(recovered);
+-- NEW: Indexes for abandonment analysis
+CREATE INDEX idx_cart_abandonments_reason ON cart_abandonments(abandonment_reason);
+CREATE INDEX idx_cart_abandonments_device ON cart_abandonments(device_type);
+CREATE INDEX idx_cart_abandonments_persona ON cart_abandonments(persona);
 
 -- ============================================================================
 -- REAL-TIME EVENTS LOG (Recent events for dashboard)
@@ -236,3 +261,108 @@ CREATE TABLE IF NOT EXISTS system_metrics (
 
 CREATE INDEX idx_system_metrics_timestamp ON system_metrics(timestamp DESC);
 CREATE INDEX idx_system_metrics_name ON system_metrics(metric_name);
+
+-- ============================================================================
+-- NEW: CART ABANDONMENT ANALYTICS VIEW (For easy querying)
+-- ============================================================================
+CREATE OR REPLACE VIEW v_cart_abandonment_analysis AS
+SELECT 
+    -- Time dimensions
+    DATE(s.start_time) as abandonment_date,
+    EXTRACT(HOUR FROM s.start_time) as abandonment_hour,
+    EXTRACT(DOW FROM s.start_time) as day_of_week,
+    
+    -- Session details
+    s.session_id,
+    s.user_id,
+    s.persona,
+    s.device_type,
+    
+    -- Cart metrics
+    s.cart_value,
+    s.cart_additions as items_in_cart,
+    s.abandonment_reason,
+    s.time_in_cart_seconds,
+    s.checkout_initiated,
+    
+    -- Session context
+    s.page_views,
+    s.session_duration_seconds,
+    s.products_viewed,
+    
+    -- Timestamps
+    s.start_time,
+    s.last_activity
+    
+FROM user_sessions s
+WHERE s.is_cart_abandoned = TRUE
+ORDER BY s.start_time DESC;
+
+-- ============================================================================
+-- NEW: CONVERSION FUNNEL VIEW
+-- ============================================================================
+CREATE OR REPLACE VIEW v_conversion_funnel AS
+SELECT 
+    DATE(start_time) as funnel_date,
+    persona,
+    device_type,
+    
+    -- Funnel stages
+    COUNT(*) as total_sessions,
+    SUM(CASE WHEN page_views > 0 THEN 1 ELSE 0 END) as browsing_sessions,
+    SUM(CASE WHEN products_viewed > 0 THEN 1 ELSE 0 END) as product_viewed_sessions,
+    SUM(CASE WHEN cart_additions > 0 THEN 1 ELSE 0 END) as cart_active_sessions,
+    SUM(CASE WHEN checkout_initiated THEN 1 ELSE 0 END) as checkout_sessions,
+    SUM(CASE WHEN is_converted THEN 1 ELSE 0 END) as purchased_sessions,
+    
+    -- Abandonment
+    SUM(CASE WHEN is_cart_abandoned THEN 1 ELSE 0 END) as abandoned_sessions,
+    
+    -- Values
+    SUM(cart_value) as total_cart_value,
+    SUM(purchase_value) as total_purchase_value,
+    AVG(cart_value) as avg_cart_value,
+    AVG(purchase_value) as avg_purchase_value,
+    
+    -- Rates
+    ROUND(
+        100.0 * SUM(CASE WHEN is_converted THEN 1 ELSE 0 END) / 
+        NULLIF(SUM(CASE WHEN cart_additions > 0 THEN 1 ELSE 0 END), 0), 
+        2
+    ) as conversion_rate,
+    ROUND(
+        100.0 * SUM(CASE WHEN is_cart_abandoned THEN 1 ELSE 0 END) / 
+        NULLIF(SUM(CASE WHEN cart_additions > 0 THEN 1 ELSE 0 END), 0), 
+        2
+    ) as abandonment_rate
+
+FROM user_sessions
+GROUP BY DATE(start_time), persona, device_type
+ORDER BY funnel_date DESC, persona;
+
+-- ============================================================================
+-- NEW: ABANDONMENT REASONS SUMMARY VIEW
+-- ============================================================================
+CREATE OR REPLACE VIEW v_abandonment_reasons AS
+SELECT 
+    abandonment_reason,
+    COUNT(*) as total_abandonments,
+    AVG(cart_value) as avg_cart_value,
+    SUM(cart_value) as total_lost_value,
+    AVG(time_in_cart_seconds) as avg_time_in_cart,
+    AVG(page_views) as avg_page_views,
+    
+    -- By device
+    SUM(CASE WHEN device_type = 'mobile' THEN 1 ELSE 0 END) as mobile_count,
+    SUM(CASE WHEN device_type = 'desktop' THEN 1 ELSE 0 END) as desktop_count,
+    SUM(CASE WHEN device_type = 'tablet' THEN 1 ELSE 0 END) as tablet_count,
+    
+    -- By persona
+    SUM(CASE WHEN persona = 'window_shopper' THEN 1 ELSE 0 END) as window_shopper_count,
+    SUM(CASE WHEN persona = 'intent_buyer' THEN 1 ELSE 0 END) as intent_buyer_count,
+    SUM(CASE WHEN persona = 'cart_abandoner' THEN 1 ELSE 0 END) as cart_abandoner_count
+
+FROM user_sessions
+WHERE is_cart_abandoned = TRUE
+GROUP BY abandonment_reason
+ORDER BY total_abandonments DESC;

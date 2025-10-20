@@ -179,11 +179,11 @@ if __name__ == "__main__":
     
     # Create producer
     producer = UserEventProducer(
-        num_users=400,  # Simulate 50 concurrent users
-        events_per_second=40  # Generate 10 events per second
+        num_users=1000,  # Simulate 1000 concurrent users
+        events_per_second=100  # Generate 100 events per second
     )
     
     # Start streaming for 60 seconds (or press Ctrl+C to stop)
-    producer.start_streaming(duration_seconds=1500)
+    producer.start_streaming(duration_seconds=2500)
     
     print("\n✅ Streaming completed!")

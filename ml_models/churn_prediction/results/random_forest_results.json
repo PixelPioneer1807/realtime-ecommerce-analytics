@@ -1,0 +1,64 @@
+{
+  "model_name": "random_forest",
+  "accuracy": 0.9392395139161114,
+  "precision": 0.9828178694158075,
+  "recall": 0.797768479776848,
+  "f1_score": 0.8806774441878368,
+  "confusion_matrix": [
+    [
+      1824,
+      10
+    ],
+    [
+      145,
+      572
+    ]
+  ],
+  "roc_auc": 0.9749509117262799,
+  "best_params": {
+    "bootstrap": true,
+    "class_weight": null,
+    "max_depth": 10,
+    "max_features": "sqrt",
+    "min_samples_leaf": 1,
+    "min_samples_split": 5,
+    "n_estimators": 300
+  },
+  "cv_f1_score": 0.8799020914197795,
+  "training_time_seconds": 1421.7210719585419,
+  "n_features": 20,
+  "feature_names": [
+    "page_views",
+    "products_viewed",
+    "unique_products_viewed",
+    "searches",
+    "cart_additions",
+    "cart_removals",
+    "cart_value",
+    "session_duration_seconds",
+    "avg_time_per_page",
+    "engagement_score",
+    "cart_engagement",
+    "time_per_product",
+    "cart_to_checkout_rate",
+    "pages_per_minute",
+    "unique_product_ratio",
+    "device_type",
+    "browser",
+    "persona",
+    "bounce",
+    "checkout_initiated"
+  ],
+  "top_10_features": {
+    "checkout_initiated": 0.19700842332983518,
+    "cart_to_checkout_rate": 0.18440212110795462,
+    "cart_engagement": 0.18382017266036346,
+    "cart_value": 0.16558115716415192,
+    "cart_additions": 0.0959518183156521,
+    "persona": 0.02478821338042482,
+    "engagement_score": 0.023903982774395694,
+    "unique_product_ratio": 0.01719793235444653,
+    "products_viewed": 0.015130795087844113,
+    "session_duration_seconds": 0.014604023720026123
+  }
+}

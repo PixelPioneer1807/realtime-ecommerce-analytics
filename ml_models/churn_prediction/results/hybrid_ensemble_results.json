@@ -1,0 +1,33 @@
+{
+  "model_name": "hybrid_ensemble",
+  "accuracy": 0.9357114856918856,
+  "precision": 0.9495934959349593,
+  "recall": 0.8145048814504882,
+  "f1_score": 0.8768768768768769,
+  "confusion_matrix": [
+    [
+      1803,
+      31
+    ],
+    [
+      133,
+      584
+    ]
+  ],
+  "roc_auc": 0.9746337961547646,
+  "base_models": [
+    "random_forest",
+    "xgboost",
+    "lightgbm"
+  ],
+  "n_base_models": 3,
+  "meta_learner": "LogisticRegression",
+  "stacking_method": "predict_proba",
+  "cv_folds": 5,
+  "training_time_seconds": 21.018547773361206,
+  "model_weights": {
+    "random_forest": 6.8070411668468305,
+    "xgboost": 2.0970777982948596,
+    "lightgbm": 0.13315585080168324
+  }
+}

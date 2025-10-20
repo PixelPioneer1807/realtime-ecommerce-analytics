@@ -18,6 +18,23 @@ from sklearn.metrics import (
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+
+def convert_to_python_types(obj):
+    """Convert numpy types to Python native types for JSON serialization"""
+    if isinstance(obj, dict):
+        return {key: convert_to_python_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_python_types(item) for item in obj]
+    elif isinstance(obj, (np.integer, np.int32, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    else:
+        return obj
+
+
 class ModelEvaluator:
     """Evaluate and save model results"""
     
@@ -84,10 +101,13 @@ class ModelEvaluator:
         if additional_info:
             self.results.update(additional_info)
         
+        # Convert all numpy types to Python types
+        serializable_results = convert_to_python_types(self.results)
+        
         # Save to JSON
         json_path = self.results_dir / f"{self.model_name}_results.json"
         with open(json_path, 'w') as f:
-            json.dump(self.results, f, indent=2)
+            json.dump(serializable_results, f, indent=2)
         
         print(f"💾 Results saved to: {json_path}")
         

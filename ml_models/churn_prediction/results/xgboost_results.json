@@ -1,0 +1,66 @@
+{
+  "model_name": "xgboost",
+  "accuracy": 0.9353194825558604,
+  "precision": 0.9584717607973422,
+  "recall": 0.8047419804741981,
+  "f1_score": 0.8749052312357848,
+  "confusion_matrix": [
+    [
+      1809,
+      25
+    ],
+    [
+      140,
+      577
+    ]
+  ],
+  "roc_auc": 0.9727676052375019,
+  "best_params": {
+    "colsample_bytree": 0.8,
+    "gamma": 0,
+    "learning_rate": 0.05,
+    "max_depth": 5,
+    "min_child_weight": 1,
+    "n_estimators": 200,
+    "reg_alpha": 0,
+    "reg_lambda": 1.5,
+    "subsample": 0.8
+  },
+  "cv_f1_score": 0.8789031953164579,
+  "training_time_seconds": 335.3319296836853,
+  "n_features": 20,
+  "feature_names": [
+    "page_views",
+    "products_viewed",
+    "unique_products_viewed",
+    "searches",
+    "cart_additions",
+    "cart_removals",
+    "cart_value",
+    "session_duration_seconds",
+    "avg_time_per_page",
+    "engagement_score",
+    "cart_engagement",
+    "time_per_product",
+    "cart_to_checkout_rate",
+    "pages_per_minute",
+    "unique_product_ratio",
+    "device_type",
+    "browser",
+    "persona",
+    "bounce",
+    "checkout_initiated"
+  ],
+  "top_10_features": {
+    "checkout_initiated": 0.4107654392719269,
+    "cart_to_checkout_rate": 0.24071131646633148,
+    "cart_value": 0.11462365090847015,
+    "cart_engagement": 0.10438031703233719,
+    "persona": 0.02401897683739662,
+    "cart_removals": 0.019723545759916306,
+    "unique_product_ratio": 0.018589936196804047,
+    "cart_additions": 0.00981224700808525,
+    "engagement_score": 0.007606095168739557,
+    "bounce": 0.006653945427387953
+  }
+}

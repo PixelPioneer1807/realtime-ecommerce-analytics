@@ -50,7 +50,6 @@ st.markdown("""
         -webkit-text-fill-color: transparent;
         text-align: center;
         margin-bottom: 2rem;
-        animation: gradient 3s ease infinite;
     }
     .metric-card {
         background-color: #f0f2f6;
@@ -64,28 +63,13 @@ st.markdown("""
         transform: translateY(-2px);
         box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     }
-    .risk-high {
-        background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%);
-        border-left-color: #f44336;
-    }
-    .risk-critical {
-        background: linear-gradient(135deg, #fce4ec 0%, #f8bbd0 100%);
-        border-left-color: #e91e63;
-    }
-    .risk-medium {
-        background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
-        border-left-color: #ff9800;
-    }
-    .risk-low {
-        background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
-        border-left-color: #4caf50;
-    }
     .info-box {
         background-color: #e3f2fd;
         padding: 1rem;
         border-radius: 8px;
         border-left: 4px solid #2196f3;
         margin: 1rem 0;
+        color: #1565c0;
     }
     .success-box {
         background-color: #e8f5e9;
@@ -93,6 +77,7 @@ st.markdown("""
         border-radius: 8px;
         border-left: 4px solid #4caf50;
         margin: 1rem 0;
+        color: #2e7d32;
     }
     .warning-box {
         background-color: #fff3e0;
@@ -100,6 +85,7 @@ st.markdown("""
         border-radius: 8px;
         border-left: 4px solid #ff9800;
         margin: 1rem 0;
+        color: #e65100;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -166,7 +152,7 @@ def display_live_predictions(time_range="Last Hour"):
     
     hours = get_time_filter(time_range)
     
-    # Get ALL predictions for the time range (not just 50)
+    # Get ALL predictions for the time range
     predictions_df = db.get_all_predictions_in_timerange(hours)
     
     if not predictions_df.empty:
@@ -176,7 +162,7 @@ def display_live_predictions(time_range="Last Hour"):
         avg_probability = predictions_df['abandonment_probability'].mean()
         interventions = predictions_df['intervention_triggered'].sum()
         
-        # Top metrics row with better styling
+        # Top metrics row
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
@@ -252,10 +238,11 @@ def display_live_predictions(time_range="Last Hour"):
                 fig.update_traces(
                     textposition='inside', 
                     textinfo='percent+label',
+                    textfont=dict(size=14),
                     hovertemplate="<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percent}<extra></extra>"
                 )
                 fig.update_layout(height=400, showlegend=True)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="risk_pie")
         
         with col2:
             st.markdown("### 📈 Hourly Predictions Trend")
@@ -266,12 +253,7 @@ def display_live_predictions(time_range="Last Hour"):
                 <li><b>Blue line:</b> Total predictions (all risk levels)</li>
                 <li><b>Red line:</b> High-risk predictions only</li>
             </ul>
-            <b>💡 Insights:</b> Spike in high-risk sessions indicates:
-            <ul>
-                <li>Peak traffic hours needing more support</li>
-                <li>Potential UX/pricing issues during that time</li>
-                <li>Opportunity for targeted campaigns</li>
-            </ul>
+            <b>💡 Insights:</b> Spike in high-risk sessions indicates peak traffic hours or potential issues.
             </div>
             """, unsafe_allow_html=True)
             
@@ -284,14 +266,16 @@ def display_live_predictions(time_range="Last Hour"):
                     y=hourly_data['total_predictions'],
                     name='Total Predictions',
                     mode='lines+markers',
-                    line=dict(color='#1f77b4', width=3)
+                    line=dict(color='#1f77b4', width=3),
+                    marker=dict(size=8)
                 ))
                 fig.add_trace(go.Scatter(
                     x=hourly_data['hour'], 
                     y=hourly_data['high_risk_count'],
                     name='High Risk',
                     mode='lines+markers',
-                    line=dict(color='#f44336', width=3)
+                    line=dict(color='#f44336', width=3),
+                    marker=dict(size=8)
                 ))
                 fig.update_layout(
                     title=f"Predictions Over Time ({time_range})",
@@ -300,16 +284,15 @@ def display_live_predictions(time_range="Last Hour"):
                     hovermode='x unified',
                     height=400
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="hourly_trend")
         
         st.markdown("---")
         
-        # Recent predictions table with better formatting
+        # Recent predictions table
         st.markdown("### 📋 Recent High-Risk Predictions (Live Stream)")
         st.markdown("""
         <div class="warning-box">
         <b>⚡ Real-Time Alerts:</b> These sessions need immediate attention. Each row represents a live user at risk of abandoning their cart.
-        Use the intervention suggestions to prevent revenue loss.
         </div>
         """, unsafe_allow_html=True)
         
@@ -486,7 +469,7 @@ def display_performance_analytics(time_range="Last Hour"):
             barmode='group'
         )
         fig.update_layout(height=400, xaxis_tickangle=-45)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="intervention_bar")
         
         # Show detailed table
         with st.expander("📊 View Detailed Metrics"):
@@ -539,7 +522,7 @@ def display_performance_analytics(time_range="Last Hour"):
                 }
             )
             fig.update_layout(height=350, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="persona_sessions")
         
         with col2:
             fig = px.bar(
@@ -555,7 +538,7 @@ def display_performance_analytics(time_range="Last Hour"):
                 }
             )
             fig.update_layout(height=350, showlegend=False, yaxis_title="Probability")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="persona_prob")
 
 def display_ab_testing():
     """Display A/B testing results (placeholder with explanation)"""
@@ -597,7 +580,7 @@ def display_ab_testing():
             color_continuous_scale='Blues'
         )
         fig.update_layout(height=350)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="ab_conv")
     
     with col2:
         fig = px.bar(
@@ -609,7 +592,7 @@ def display_ab_testing():
             color_continuous_scale='Greens'
         )
         fig.update_layout(height=350)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="ab_cart")
     
     st.markdown("""
     <div class="warning-box">

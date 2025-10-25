@@ -184,6 +184,6 @@ if __name__ == "__main__":
     )
     
     # Start streaming for 60 seconds (or press Ctrl+C to stop)
-    producer.start_streaming(duration_seconds=2500)
+    producer.start_streaming(duration_seconds=3000)
     
     print("\n✅ Streaming completed!")

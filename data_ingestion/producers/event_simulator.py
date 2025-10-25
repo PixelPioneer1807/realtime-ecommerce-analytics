@@ -3,12 +3,17 @@ Event simulator for generating realistic e-commerce user behavior.
 Simulates users browsing, adding to cart, purchasing, and abandoning carts.
 This creates the real-time event stream that mimics production traffic.
 
+NEW FEATURE: Intervention Recovery Simulation
+- 15% of high-risk users who receive interventions will return and convert
+- Simulates real-world ML intervention effectiveness
+
 PORTFOLIO FEATURES:
 - User personas with different behavior patterns
 - Realistic event sequences (can't buy without adding to cart)
 - Cart abandonment detection (15-20 min inactivity)
 - Variable timing between events
 - Abandonment reasons tracking
+- Intervention recovery tracking
 """
 
 import logging
@@ -38,6 +43,7 @@ class SessionState(Enum):
     CHECKOUT_INITIATED = "checkout_initiated"
     PURCHASED = "purchased"
     ABANDONED = "abandoned"
+    RECOVERING = "recovering"              # NEW: Recovering from abandonment after intervention
 
 
 @dataclass
@@ -59,6 +65,11 @@ class UserSession:
     # Cart abandonment tracking
     cart_created_at: Optional[datetime] = None
     abandonment_reason: Optional[str] = None
+    
+    # NEW: Intervention tracking
+    received_intervention: bool = False
+    intervention_time: Optional[datetime] = None
+    will_recover: bool = False  # Set to True if user will come back
     
     def calculate_session_duration(self) -> int:
         """Calculate session duration in seconds"""
@@ -136,6 +147,11 @@ class EventSimulator:
     # Cart abandonment threshold (15-20 minutes in seconds)
     CART_ABANDONMENT_THRESHOLD = random.randint(900, 1200)  # 15-20 min
     
+    # NEW: Intervention recovery settings
+    INTERVENTION_RECOVERY_RATE = 0.15  # 15% of high-risk users will recover
+    RECOVERY_DELAY_MIN = 300  # 5 minutes minimum before recovery
+    RECOVERY_DELAY_MAX = 600  # 10 minutes maximum before recovery
+    
     def __init__(
         self, 
         num_users: int = 10, 
@@ -155,6 +171,9 @@ class EventSimulator:
         
         # Track last event time per session for realistic timing
         self.last_event_time: Dict[str, datetime] = {}
+        
+        # NEW: Track sessions waiting for recovery
+        self.recovery_queue: List[UserSession] = []
         
         logger.info(
             f"Event simulator initialized with {num_users} users and "
@@ -242,29 +261,6 @@ class EventSimulator:
         
         self.all_events.append(event)
         return event
-    
-    def _should_wait_for_action(self, session_id: str, action_type: str) -> bool:
-        """
-        Check if we should wait before allowing next action (realistic timing).
-        
-        Args:
-            session_id: Session ID
-            action_type: Type of action to perform
-            
-        Returns:
-            True if should wait
-        """
-        if session_id not in self.last_event_time:
-            return False
-        
-        last_time = self.last_event_time[session_id]
-        min_delay, max_delay = self.ACTION_DELAYS.get(action_type, (1, 5))
-        
-        # Random delay within range
-        required_delay = random.uniform(min_delay, max_delay)
-        elapsed = (datetime.utcnow() - last_time).total_seconds()
-        
-        return elapsed < required_delay
     
     def _update_session_state(self, session: UserSession, new_state: SessionState):
         """Update session state with logging"""
@@ -448,7 +444,8 @@ class EventSimulator:
             session,
             quantity=len(session.cart_items),
             cart_value=total_value,
-            payment_method=random.choice(['credit_card', 'debit_card', 'paypal', 'apple_pay'])
+            payment_method=random.choice(['credit_card', 'debit_card', 'paypal', 'apple_pay']),
+            recovered_from_abandonment=session.received_intervention  # NEW: Track if this was a recovery
         )
         
         # State transition
@@ -457,12 +454,21 @@ class EventSimulator:
         # Clear cart after purchase
         session.cart_items = []
         
+        # Log recovery success
+        if session.received_intervention:
+            logger.info(
+                f"🎉 RECOVERY SUCCESS: Session {session.session_id} purchased ${total_value:.2f} "
+                f"after intervention!"
+            )
+        
         return event
     
     def simulate_cart_abandoned(self, session: UserSession) -> Dict[str, Any]:
         """
         Simulate cart abandonment event.
         Called when cart has been inactive for threshold period.
+        
+        NEW: Determines if user will recover after intervention.
         """
         if not session.cart_items:
             return None
@@ -480,6 +486,19 @@ class EventSimulator:
         
         session.abandonment_reason = reason
         session.last_activity = datetime.utcnow()
+        
+        # NEW: Determine if this session will recover (15% chance if high-risk)
+        if cart_value > 50:  # Only high-value carts get recovery simulation
+            if random.random() < self.INTERVENTION_RECOVERY_RATE:
+                session.will_recover = True
+                session.received_intervention = True
+                session.intervention_time = datetime.utcnow()
+                # Add to recovery queue
+                self.recovery_queue.append(session)
+                logger.info(
+                    f"💡 Session {session.session_id} marked for RECOVERY "
+                    f"(cart: ${cart_value:.2f})"
+                )
         
         event = self._create_event(
             'cart_abandoned',
@@ -500,6 +519,52 @@ class EventSimulator:
         )
         
         return event
+    
+    def check_recovery_queue(self) -> Optional[Dict[str, Any]]:
+        """
+        NEW: Check if any abandoned sessions are ready to recover.
+        
+        Returns:
+            Recovery event if a session is ready to recover
+        """
+        now = datetime.utcnow()
+        
+        for session in list(self.recovery_queue):
+            if not session.intervention_time:
+                continue
+            
+            # Check if enough time has passed since intervention
+            time_since_intervention = (now - session.intervention_time).total_seconds()
+            
+            if time_since_intervention >= self.RECOVERY_DELAY_MIN:
+                # User is ready to come back!
+                self.recovery_queue.remove(session)
+                
+                # Reactivate session
+                session.state = SessionState.RECOVERING
+                session.last_activity = now
+                self.last_event_time[session.session_id] = now
+                
+                # Add back to active sessions if not there
+                if session.session_id not in self.active_sessions:
+                    self.active_sessions[session.session_id] = session
+                
+                logger.info(
+                    f"🔄 RECOVERY INITIATED: Session {session.session_id} returning "
+                    f"after {time_since_intervention:.0f}s"
+                )
+                
+                # Generate recovery event (user comes back)
+                event = self._create_event(
+                    'session_recovered',
+                    session,
+                    recovery_time_seconds=int(time_since_intervention),
+                    cart_value=session.get_cart_value()
+                )
+                
+                return event
+        
+        return None
     
     def simulate_search(self, session: UserSession) -> Dict[str, Any]:
         """Simulate a search event"""
@@ -538,9 +603,13 @@ class EventSimulator:
                 return random.random() < 0.8
             return random.random() < 0.95
         
-        # End session if cart abandoned
-        if session.state == SessionState.ABANDONED:
+        # End session if cart abandoned (but not if recovering)
+        if session.state == SessionState.ABANDONED and not session.will_recover:
             return random.random() < 0.9
+        
+        # Don't end sessions that are recovering
+        if session.state == SessionState.RECOVERING:
+            return False
         
         # Persona-based session duration preferences
         if session.persona == UserPersona.WINDOW_SHOPPER:
@@ -574,7 +643,8 @@ class EventSimulator:
             converted=session.converted,
             cart_abandoned=len(session.cart_items) > 0 and not session.converted,
             abandonment_reason=session.abandonment_reason,
-            persona=session.persona.value
+            persona=session.persona.value,
+            recovered_from_intervention=session.received_intervention and session.converted
         )
         
         # Remove from active sessions
@@ -615,10 +685,17 @@ class EventSimulator:
         """
         Generate a single realistic event following user journey logic.
         
+        NEW: Also checks recovery queue for users returning after interventions.
+        
         Returns:
             Event dictionary
         """
-        # Check for abandoned carts first (every event generation cycle)
+        # NEW: Check recovery queue first
+        recovery_event = self.check_recovery_queue()
+        if recovery_event:
+            return recovery_event
+        
+        # Check for abandoned carts
         abandoned_events = self.check_abandoned_carts()
         if abandoned_events and random.random() < 0.3:  # 30% chance to return abandoned event
             return abandoned_events[0]
@@ -668,6 +745,8 @@ class EventSimulator:
         Determine next action based on session state and persona.
         This creates realistic user journeys.
         
+        NEW: RECOVERING sessions have high probability to purchase.
+        
         Args:
             session: UserSession object
             
@@ -676,6 +755,17 @@ class EventSimulator:
         """
         state = session.state
         persona = session.persona
+        
+        # NEW: RECOVERING state - user came back after intervention
+        if state == SessionState.RECOVERING:
+            # High probability of purchase after recovery
+            weights = {
+                'checkout': 40,
+                'purchase': 50,  # 50% chance to complete purchase
+                'product_view': 5,
+                'page_view': 5
+            }
+            return random.choices(list(weights.keys()), weights=list(weights.values()))[0]
         
         # BROWSING state
         if state == SessionState.BROWSING:
@@ -795,6 +885,7 @@ class EventSimulator:
         # Calculate abandonment rate
         cart_abandoned = event_counts.get('cart_abandoned', 0)
         purchases = event_counts.get('purchase', 0)
+        recoveries = event_counts.get('session_recovered', 0)
         total_cart_interactions = cart_abandoned + purchases
         abandonment_rate = (cart_abandoned / total_cart_interactions * 100) if total_cart_interactions > 0 else 0
         
@@ -805,7 +896,9 @@ class EventSimulator:
             'persona_distribution': {p.value: count for p, count in persona_counts.items()},
             'abandonment_rate': round(abandonment_rate, 2),
             'purchases': purchases,
-            'cart_abandonments': cart_abandoned
+            'cart_abandonments': cart_abandoned,
+            'recoveries': recoveries,
+            'recovery_queue_size': len(self.recovery_queue)
         }
 
 
@@ -846,7 +939,8 @@ if __name__ == "__main__":
             'cart_abandoned': '🛒❌',
             'purchase': '✅💰',
             'add_to_cart': '🛒',
-            'checkout_initiated': '💳'
+            'checkout_initiated': '💳',
+            'session_recovered': '🔄'
         }.get(event_type, '  ')
         
         print(f"{i+1:<4} {emoji} {event_type:<23} {user_id:<6} {session_id:<12} {state:<20}")
@@ -865,6 +959,8 @@ if __name__ == "__main__":
     print(f"  Active sessions: {stats['active_sessions']}")
     print(f"  Purchases: {stats['purchases']}")
     print(f"  Cart abandonments: {stats['cart_abandonments']}")
+    print(f"  Recoveries: {stats['recoveries']} 🔄")
+    print(f"  Recovery queue: {stats['recovery_queue_size']}")
     print(f"  Abandonment rate: {stats['abandonment_rate']}%")
     
     print(f"\n👥 Persona Distribution:")

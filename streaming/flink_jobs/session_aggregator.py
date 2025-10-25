@@ -95,6 +95,8 @@ class SessionAggregator(StreamProcessor):
             elif event_type == 'purchase':
                 metrics['is_converted'] = True
                 metrics['purchase_value'] = event.get('cart_value', 0.0)
+                # NEW: Update intervention conversion status
+                self._update_intervention_conversion(session_id)
             elif event_type == 'cart_abandoned':
                 metrics['is_cart_abandoned'] = True
                 metrics['abandonment_reason'] = event.get('abandonment_reason')
@@ -105,6 +107,42 @@ class SessionAggregator(StreamProcessor):
         except Exception as e:
             logger.error(f"Error processing event: {e}")
             return None
+
+    def _update_intervention_conversion(self, session_id: str):
+        """
+        Update ml_predictions table when a user converts after intervention.
+        This tracks the effectiveness of our ML interventions.
+        """
+        if not self.pg_conn:
+            return
+        
+        try:
+            cursor = self.pg_conn.cursor()
+            
+            # Update the prediction record to mark as converted
+            update_query = """
+                UPDATE ml_predictions
+                SET actual_outcome = 'converted',
+                    was_prediction_correct = CASE 
+                        WHEN predicted_abandoned = TRUE THEN FALSE
+                        ELSE TRUE
+                    END
+                WHERE session_id = %s
+                AND actual_outcome IS NULL
+            """
+            
+            cursor.execute(update_query, (session_id,))
+            rows_updated = cursor.rowcount
+            self.pg_conn.commit()
+            cursor.close()
+            
+            if rows_updated > 0:
+                logger.info(f"✅ Intervention SUCCESS: Session {session_id} converted after intervention!")
+            
+        except Exception as e:
+            logger.error(f"Error updating intervention conversion: {e}")
+            if self.pg_conn:
+                self.pg_conn.rollback()
 
     def process_window(self, key: str, events: List[dict]) -> Optional[dict]:
         try:
@@ -181,9 +219,9 @@ class SessionAggregator(StreamProcessor):
                 "checkout_initiated": bool(checkout_initiated)
             }
 
-            # Call ML API only if ML service is initialized
+            # Call ML API only if ML service is initialized AND cart has value
             prediction = None
-            if self.ml_service:
+            if self.ml_service and cart_value > 0:
                 start_time_predict = time.time()
                 prediction = self.ml_service.call_ml_api(ml_payload)
 
@@ -197,8 +235,28 @@ class SessionAggregator(StreamProcessor):
                             f"(probability: {prediction.get('abandonment_probability')*100:.2f}%) "
                             f"recommended: {prediction.get('recommended_intervention')}"
                         )
-            else:
-                logger.debug("ML service not initialized, skipping prediction")
+            
+            # NEW: If session ended with abandonment, mark prediction as correct
+            if is_cart_abandoned and self.pg_conn:
+                try:
+                    cursor = self.pg_conn.cursor()
+                    update_query = """
+                        UPDATE ml_predictions
+                        SET actual_outcome = 'abandoned',
+                            was_prediction_correct = CASE 
+                                WHEN predicted_abandoned = TRUE THEN TRUE
+                                ELSE FALSE
+                            END
+                        WHERE session_id = %s
+                        AND actual_outcome IS NULL
+                    """
+                    cursor.execute(update_query, (session_id,))
+                    self.pg_conn.commit()
+                    cursor.close()
+                except Exception as e:
+                    logger.error(f"Error updating abandonment outcome: {e}")
+                    if self.pg_conn:
+                        self.pg_conn.rollback()
 
             session_record = {
                 'session_id': session_id,
@@ -260,6 +318,7 @@ if __name__ == "__main__":
     print("\n✨ NEW FEATURES:")
     print("  - Real-time ML abandonment prediction and logging")
     print("  - Cart abandonment reasons and persona tracking")
+    print("  - Intervention conversion tracking")
     print("\nMake sure the following are running:")
     print(" 1. Docker Compose (Kafka, PostgreSQL, Redis)")
     print(" 2. User event producer")
